@@ -20,31 +20,33 @@ from tqdm import tqdm
 
 gaussian_mean = torch.tensor(0.0)
 gaussian_std = torch.tensor(0.1)
+lossf = open('content/checkpoints/losses.txt','w')
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', type=str, default='Hayao')
-    parser.add_argument('--data-dir', type=str, default='/content/dataset')
-    parser.add_argument('--epochs', type=int, default=100)
-    parser.add_argument('--init-epochs', type=int, default=5)
-    parser.add_argument('--batch-size', type=int, default=6)
-    parser.add_argument('--checkpoint-dir', type=str, default='/content/checkpoints')
-    parser.add_argument('--save-image-dir', type=str, default='/content/images')
+    parser.add_argument('--dataset', type=str, default='Anime')
+    parser.add_argument('--data-dir', type=str, default='Dataset')
+    parser.add_argument('--epochs', type=int, default=50)
+    parser.add_argument('--init-epochs', type=int, default=3)
+    parser.add_argument('--batch-size', type=int, default=12)
+    parser.add_argument('--checkpoint-dir', type=str, default='content/checkpoints')
+    parser.add_argument('--save-image-dir', type=str, default='content/images')
     parser.add_argument('--gan-loss', type=str, default='lsgan', help='lsgan / hinge / bce')
     parser.add_argument('--resume', type=str, default='False')
     parser.add_argument('--use_sn', action='store_true')
     parser.add_argument('--save-interval', type=int, default=1)
     parser.add_argument('--debug-samples', type=int, default=0)
-    parser.add_argument('--lr-g', type=float, default=2e-4)
-    parser.add_argument('--lr-d', type=float, default=4e-4)
-    parser.add_argument('--init-lr', type=float, default=1e-3)
-    parser.add_argument('--wadvg', type=float, default=10.0, help='Adversarial loss weight for G')
-    parser.add_argument('--wadvd', type=float, default=10.0, help='Adversarial loss weight for D')
-    parser.add_argument('--wcon', type=float, default=1.5, help='Content loss weight')
-    parser.add_argument('--wgra', type=float, default=3.0, help='Gram loss weight')
-    parser.add_argument('--wcol', type=float, default=30.0, help='Color loss weight')
-    parser.add_argument('--d-layers', type=int, default=3, help='Discriminator conv layers')
+    parser.add_argument('--lr-g', type=float, default=1e-6)
+    parser.add_argument('--lr-d', type=float, default=2e-6)
+    parser.add_argument('--init-lr', type=float, default=2e-6)
+    parser.add_argument('--wadvg', type=float, default=20.0, help='Adversarial loss weight for G')
+    parser.add_argument('--wadvd', type=float, default=20.0, help='Adversarial loss weight for D')
+    parser.add_argument('--wcon', type=float, default=1.0, help='Content loss weight')
+    parser.add_argument('--wface', type=float, default=10.0, help='Face Recog loss weight')
+    parser.add_argument('--wgra', type=float, default=2.0, help='Gram loss weight')
+    parser.add_argument('--wcol', type=float, default=40.0, help='Color loss weight')
+    parser.add_argument('--d-layers', type=int, default=2, help='Discriminator conv layers')
     parser.add_argument('--d-noise', action='store_true')
 
     return parser.parse_args()
@@ -153,6 +155,9 @@ def main(args):
         print(f"Epoch {e}/{args.epochs}")
         bar = tqdm(data_loader)
         G.train()
+        
+        if e > args.init_epochs and e % 5 == 0:
+            os.system('python3 inference_image.py --dest=content/output_imgs_e'+str(e))
 
         init_losses = []
 
@@ -171,7 +176,9 @@ def main(args):
 
                 init_losses.append(loss.cpu().detach().numpy())
                 avg_content_loss = sum(init_losses) / len(init_losses)
-                bar.set_description(f'[Init Training G] content loss: {avg_content_loss:2f}')
+                bar.set_description(f'[Init Training G] content and face loss: {avg_content_loss:2f}')
+
+            lossf.write(f'{avg_content_loss:2f}\n')
 
             set_lr(optimizer_g, args.lr_g)
             save_checkpoint(G, optimizer_g, e, args, posfix='_init')
@@ -216,20 +223,23 @@ def main(args):
             fake_img = G(img)
             fake_d = D(fake_img)
 
-            adv_loss, con_loss, gra_loss, col_loss = loss_fn.compute_loss_G(
+            # Loss function here is changed
+            
+            adv_loss, con_loss, gra_loss, col_loss, face_loss = loss_fn.compute_loss_G(
                 fake_img, img, fake_d, anime_gray)
 
-            loss_g = adv_loss + con_loss + gra_loss + col_loss
+            loss_g = adv_loss + con_loss + gra_loss + col_loss + face_loss
 
             loss_g.backward()
             optimizer_g.step()
 
-            loss_tracker.update_loss_G(adv_loss, gra_loss, col_loss, con_loss)
+            loss_tracker.update_loss_G(adv_loss, gra_loss, col_loss, con_loss, face_loss)
 
-            avg_adv, avg_gram, avg_color, avg_content = loss_tracker.avg_loss_G()
+            avg_adv, avg_gram, avg_color, avg_content, avg_face = loss_tracker.avg_loss_G()
             avg_adv_d = loss_tracker.avg_loss_D()
-            bar.set_description(f'loss G: adv {avg_adv:2f} con {avg_content:2f} gram {avg_gram:2f} color {avg_color:2f} / loss D: {avg_adv_d:2f}')
-
+            bar.set_description(f'loss G: adv {avg_adv:2f} con {avg_content:2f} gram {avg_gram:2f} color {avg_color:2f} face {avg_face:2f}/ loss D: {avg_adv_d:2f}')
+            
+        lossf.write(f'adv {avg_adv:2f} con {avg_content:2f} gram {avg_gram:2f} color {avg_color:2f} face {avg_face:2f} lossD {avg_adv_d:2f}\n')
         if e % args.save_interval == 0:
             save_checkpoint(G, optimizer_g, e, args)
             save_checkpoint(D, optimizer_d, e, args)
@@ -245,3 +255,4 @@ if __name__ == '__main__':
     print("==========================")
 
     main(args)
+    lossf.close()

@@ -106,7 +106,7 @@ def compute_data_mean(data_folder):
     image_files = os.listdir(data_folder)
     total = np.zeros(3)
 
-    print(f"Compute mean (R, G, B) from {len(image_files)} images")
+    print(f"Compute mean (R, G, B) from {len(image_files)} images in {data_folder}")
 
     for img_file in tqdm(image_files):
         path = os.path.join(data_folder, img_file)

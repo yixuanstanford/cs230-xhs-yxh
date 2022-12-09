@@ -7,6 +7,7 @@ from modeling.conv_blocks import UpConv
 from modeling.conv_blocks import SeparableConv2D
 from modeling.conv_blocks import InvertedResBlock
 from modeling.conv_blocks import ConvBlock
+from modeling.conv_blocks import UNetResBlock
 from utils.common import initialize_weights
 
 
@@ -21,25 +22,16 @@ class Generator(nn.Module):
             ConvBlock(64, 128, bias=bias),
             DownConv(128, bias=bias),
             ConvBlock(128, 128, bias=bias),
-            SeparableConv2D(128, 256, bias=bias),
-            DownConv(256, bias=bias),
-            ConvBlock(256, 256, bias=bias),
+            SeparableConv2D(128, 128, bias=bias),
         )
 
         self.res_blocks = nn.Sequential(
-            InvertedResBlock(256, 256, bias=bias),
-            InvertedResBlock(256, 256, bias=bias),
-            InvertedResBlock(256, 256, bias=bias),
-            InvertedResBlock(256, 256, bias=bias),
-            InvertedResBlock(256, 256, bias=bias),
-            InvertedResBlock(256, 256, bias=bias),
-            InvertedResBlock(256, 256, bias=bias),
-            InvertedResBlock(256, 256, bias=bias),
+            InvertedResBlock(128, 128, bias=bias),
+            UNetResBlock(128, 128, bias=bias),
+            InvertedResBlock(128, 128, bias=bias),
         )
 
         self.decode_blocks = nn.Sequential(
-            ConvBlock(256, 128, bias=bias),
-            UpConv(128, bias=bias),
             SeparableConv2D(128, 128, bias=bias),
             ConvBlock(128, 128, bias=bias),
             UpConv(128, bias=bias),
@@ -64,7 +56,7 @@ class Discriminator(nn.Module):
         super(Discriminator, self).__init__()
         self.name = f'discriminator_{args.dataset}'
         self.bias = False
-        channels = 32
+        channels = 64
 
         layers = [
             nn.Conv2d(3, channels, kernel_size=3, stride=1, padding=1, bias=self.bias),

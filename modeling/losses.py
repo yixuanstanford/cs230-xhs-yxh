@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 from modeling.vgg import Vgg19
+from modeling.vggface import VggFace
 from utils.image_processing import gram, rgb_to_yuv
 
 
@@ -18,8 +19,8 @@ class ColorLoss(nn.Module):
         # After convert to yuv, both images have channel last
 
         return (self.l1(image[:, :, :, 0], image_g[:, :, :, 0]) +
-                self.huber(image[:, :, :, 1], image_g[:, :, :, 1]) +
-                self.huber(image[:, :, :, 2], image_g[:, :, :, 2]))
+                2*self.huber(image[:, :, :, 1], image_g[:, :, :, 1]) +
+                2*self.huber(image[:, :, :, 2], image_g[:, :, :, 2]))
 
 
 class AnimeGanLoss:
@@ -30,9 +31,11 @@ class AnimeGanLoss:
         self.wadvg = args.wadvg
         self.wadvd = args.wadvd
         self.wcon = args.wcon
+        self.wface = args.wface
         self.wgra = args.wgra
         self.wcol = args.wcol
         self.vgg19 = Vgg19().cuda().eval()
+        self.vggf = VggFace().cuda().eval()
         self.adv_type = args.gan_loss
         self.bce_loss = nn.BCELoss()
 
@@ -52,12 +55,16 @@ class AnimeGanLoss:
         fake_feat = self.vgg19(fake_img)
         anime_feat = self.vgg19(anime_gray)
         img_feat = self.vgg19(img).detach()
+        
+        fake_face = self.vggf(fake_img)
+        img_face = self.vggf(img).detach()
 
         return [
             self.wadvg * self.adv_loss_g(fake_logit),
             self.wcon * self.content_loss(img_feat, fake_feat),
             self.wgra * self.gram_loss(gram(anime_feat), gram(fake_feat)),
             self.wcol * self.color_loss(img, fake_img),
+            self.wface * self.content_loss(img_face, fake_face), #Added Face Recognition Network
         ]
 
     def compute_loss_D(self, fake_img_d, real_anime_d, real_anime_gray_d, real_anime_smooth_gray_d):
@@ -72,8 +79,14 @@ class AnimeGanLoss:
     def content_loss_vgg(self, image, recontruction):
         feat = self.vgg19(image)
         re_feat = self.vgg19(recontruction)
+        face = self.vggf(image)
+        re_face = self.vggf(recontruction)
+        return self.content_loss(feat, re_feat) + self.wface*self.content_loss(face, re_face)
 
-        return self.content_loss(feat, re_feat)
+    def content_loss_vggf(self, image, recontruction):
+        face = self.vggf(image)
+        re_face = self.vggf(recontruction)
+        return self.content_loss(face, re_face)
 
     def adv_loss_d_real(self, pred):
         if self.adv_type == 'hinge':
@@ -122,13 +135,15 @@ class LossSummary:
         self.loss_content = []
         self.loss_gram = []
         self.loss_color = []
+        self.loss_face = []
         self.loss_d_adv = []
 
-    def update_loss_G(self, adv, gram, color, content):
+    def update_loss_G(self, adv, gram, color, content, face):
         self.loss_g_adv.append(adv.cpu().detach().numpy())
         self.loss_gram.append(gram.cpu().detach().numpy())
         self.loss_color.append(color.cpu().detach().numpy())
         self.loss_content.append(content.cpu().detach().numpy())
+        self.loss_face.append(face.cpu().detach().numpy())
 
     def update_loss_D(self, loss):
         self.loss_d_adv.append(loss.cpu().detach().numpy())
@@ -139,6 +154,7 @@ class LossSummary:
             self._avg(self.loss_gram),
             self._avg(self.loss_color),
             self._avg(self.loss_content),
+            self._avg(self.loss_face),
         )
 
     def avg_loss_D(self):
